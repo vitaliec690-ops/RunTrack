@@ -3,14 +3,18 @@ name: Android APK
 on:
   workflow_dispatch:
   push:
-    branches: [ main, master ]
-
-env:
-  MAPS_API_KEY: ${{ secrets.MAPS_API_KEY }}
+    paths:
+      - '**/*.kt'
+      - '**/*.kts'
+      - 'app/**'
+      - '.github/workflows/android.yml'
 
 jobs:
   build:
     runs-on: ubuntu-latest
+    env:
+      PROJECT_DIR: .
+      ANDROID_SDK_ROOT: ${{ runner.temp }}/android-sdk
 
     steps:
       - name: Checkout
@@ -19,74 +23,57 @@ jobs:
       - name: Set up JDK 17
         uses: actions/setup-java@v4
         with:
-          distribution: 'temurin'
+          distribution: temurin
           java-version: '17'
-          cache: gradle
 
       - name: Install Android SDK + Build Tools
         uses: android-actions/setup-android@v3
+        with:
+          packages: |
+            build-tools;34.0.0
+            platforms;android-34
+            platforms;android-33
+            platform-tools
+            extras;google;m2repository
+            extras;android;m2repository
 
-      - name: Accept licenses & install platforms
-        run: |
-          yes | sdkmanager --licenses
-          sdkmanager "platform-tools" "platforms;android-34" "build-tools;34.0.0" "cmdline-tools;latest"
+      - name: Accept licenses
+        run: yes | sdkmanager --licenses
 
-      # Detectăm unde e proiectul (căutăm gradlew)
-      - name: Detect project dir
-        id: detect
-        run: |
-          set -e
-          if [ -f gradlew ]; then
-            echo "PROJECT_DIR=." >> $GITHUB_ENV
-            echo "Using root as project dir"
-          else
-            CANDIDATE=$(find . -maxdepth 4 -type f -name gradlew | head -n1 | xargs -I{} dirname {})
-            if [ -z "$CANDIDATE" ]; then
-              echo "❌ gradlew not found in repo"; exit 1
-            fi
-            echo "PROJECT_DIR=$CANDIDATE" >> $GITHUB_ENV
-            echo "Using PROJECT_DIR=$CANDIDATE"
-          fi
-          echo "Listing project dir:"
-          ls -la "$CANDIDATE" 2>/dev/null || ls -la .
+      # Generează GRADLE WRAPPER în CI (nu mai trebuie local)
+      - name: Generate Gradle wrapper (if missing)
+        uses: gradle/gradle-build-action@v2
+        with:
+          gradle-version: 8.4
+          build-root-directory: ${{ env.PROJECT_DIR }}
+          arguments: wrapper --gradle-version 8.4
 
       - name: Make gradlew executable
-        run: chmod +x "$PROJECT_DIR/gradlew"
+        run: chmod +x $PROJECT_DIR/gradlew
 
-      - name: Inject MAPS_API_KEY in Manifest (CI-only)
-        if: env.MAPS_API_KEY != ''
+      # Opțional: injectează cheia Maps dacă ai placeholder în manifest
+      - name: Inject MAPS_API_KEY in Manifest (CI only)
+        if: ${{ secrets.MAPS_API_KEY != '' }}
         run: |
-          # încercăm întâi calea standard
           MANIFEST="$PROJECT_DIR/app/src/main/AndroidManifest.xml"
-          if [ ! -f "$MANIFEST" ]; then
-            # căutăm un manifest în submodule, dacă structura diferă
-            MANIFEST=$(find "$PROJECT_DIR" -path "*/src/main/AndroidManifest.xml" | head -n1 || true)
-          fi
-          if [ -n "$MANIFEST" ] && [ -f "$MANIFEST" ]; then
-            sed -i 's|\${MAPS_API_KEY}|'"${MAPS_API_KEY}"'|g' "$MANIFEST"
-            echo "Injected MAPS_API_KEY into $MANIFEST"
-          else
-            echo "⚠️ Manifest not found; skipping MAPS_API_KEY injection"
+          if grep -q 'MAPS_API_KEY' "$MANIFEST"; then
+            sed -i 's/\${MAPS_API_KEY}/'"${{ secrets.MAPS_API_KEY }}"'/' "$MANIFEST"
           fi
 
       - name: Build Debug APK
-        run: |
-          cd "$PROJECT_DIR"
-          ./gradlew clean :app:assembleDebug --stacktrace --no-daemon
+        run: $PROJECT_DIR/gradlew -p $PROJECT_DIR assembleDebug
 
-      - name: Show manifest merge report (only if failed)
-        if: failure()
+      - name: Show manifest merge report (if exists)
+        if: always()
         run: |
-          REPORT=$(find "$PROJECT_DIR" -path "*/build/outputs/logs/manifest-merger-debug-report.txt" | head -n1 || true)
-          if [ -n "$REPORT" ]; then
-            echo "==== Manifest Merge Report ===="
-            cat "$REPORT" || true
-          else
-            echo "No manifest merge report found."
-          fi
+          REPORT="$PROJECT_DIR/app/build/outputs/logs/manifest-merger-debug-report.txt"
+          [ -f "$REPORT" ] && { echo "---- Manifest merge report ----"; cat "$REPORT"; } || true
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
+        with:
+          name: app-debug
+          path: ${{
         with:
           name: app-debug
           path: ${{ env.PROJECT_DIR }}//build/outputs/apk//**/*.apk
