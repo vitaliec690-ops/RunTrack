@@ -1,3 +1,9 @@
+defaults:
+  run:
+    working-directory: run-track-master
+
+
+
 name: Android APK
 
 on:
