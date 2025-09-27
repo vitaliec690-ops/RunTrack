@@ -2,7 +2,7 @@ name: Android APK
 
 on:
   push:
-    branches: [ main ]
+    branches: [ "main" ]
   workflow_dispatch:
 
 jobs:
@@ -17,35 +17,13 @@ jobs:
         uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: 17
-          cache: gradle
+          java-version: '17'
 
-      - name: Install Android SDK + Build Tools
+      - name: Install Android SDK + build tools
         uses: android-actions/setup-android@v3
-
-      - name: Accept SDK licenses
-        run: yes | sdkmanager --licenses
-
-      - name: Install required platforms & build-tools
-        run: |
-          sdkmanager "platforms;android-34" "build-tools;34.0.0"
 
       - name: Make gradlew executable
         run: chmod +x ./gradlew
-
-      # CI fallback pentru MAPS_API_KEY ca să nu mai pice manifest merger
-      - name: Inject MAPS_API_KEY in Manifest (CI only)
-        env:
-          MAPS_KEY: ${{ secrets.MAPS_API_KEY }}
-        run: |
-          FILE="app/src/main/AndroidManifest.xml"
-          if [ -f "$FILE" ]; then
-            KEY="${MAPS_KEY:-FAKE_KEY_FOR_DEBUG}"
-            # înlocuiește fie ${MAPS_API_KEY}, fie <MAPS_API_KEY>
-            sed -i -E 's/android:value="\$\{MAPS_API_KEY\}"/android:value="REPLACE_KEY"/g' "$FILE" || true
-            sed -i -E 's/android:value="<MAPS_API_KEY>"/android:value="REPLACE_KEY"/g' "$FILE" || true
-            sed -i -E "s/REPLACE_KEY/${KEY//\//\\/}/g" "$FILE" || true
-          fi
 
       - name: Build Debug APK
         run: ./gradlew --no-daemon --stacktrace :app:assembleDebug
@@ -53,5 +31,5 @@ jobs:
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: app-debug
+          name: app-debug-apk
           path: app/build/outputs/apk/debug/*.apk
